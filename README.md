@@ -3,3 +3,5 @@ This is a recording firmware running on Arduino UNO. The audio data is recorded 
 Cyberon Voice Recorder running at PC can receive the audio data sent from Arduino UNO. You can download Cyberon Voice Recorder at 
 
 https://tool.cyberon.com.tw/VoiceRecorder/index.php?lang=en
+
+![Screenshot - 800x600](/Screenshot.png)
