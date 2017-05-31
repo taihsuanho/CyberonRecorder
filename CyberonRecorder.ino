@@ -1,6 +1,4 @@
-  
-#define BAUD_RATE         921600
-#define FRAME_SIZE        4    // Has to be power of 2 for fast mod(%) operation.
+#define FRAME_SIZE        4     // Has to be power of 2 for fast mod(%) operation.
 #define HALF_SIZE         (FRAME_SIZE >> 1)
 #define HALF_BUF_SIZE     (HALF_SIZE * 3)
 
@@ -8,21 +6,36 @@
 #define TICKS_11KHZ       1320
 #define TICKS_16KHZ       880
 #define TICKS_22KHZ       620
-#define TICKS_32KHZ       420
 
-#define CMD_START         0x31  // Start recording
-#define CMD_STOP          0x32  // Stop recording
-#define CMD_8KHZ          0x41  // Set 8kHz sampling rate
-#define CMD_11KHZ         0x42  
-#define CMD_16KHZ         0x43  
-#define CMD_22KHZ         0x44  
-#define CMD_32KHZ         0x45  
+#define CMD_ACK           '0'   // ACK simply return 0x00
+#define CMD_START         '1'   // Start recording
+#define CMD_STOP          '2'   // Stop recording
+
+#define CMD_8KHZ          'A'   // Set 8kHz sampling rate
+#define CMD_11KHZ         'B'   // Set 11kHz  
+#define CMD_16KHZ         'C'   // Set 16kHz  
+#define CMD_22KHZ         'D'   // Set 22kHz
+
+#define CMD_CH1           'a'   // Set mono channel
+
+#define CMD_BAUD115200    'o'   // Set baud 115200
+#define CMD_BAUD460800    'p'   // Set baud 460800
+#define CMD_BAUD921600    'q'   // Set baud 921600
+#define CMD_BAUD1000000   'r'   // Set baud 1M
+
+#define CMD_VERSION       'V'   // Get version (optional for recorder)
+#define CMD_CAPABILITY    'X'   // Get capability (optional for recorder)
 
 #define MIC_PIN           A1
 
+// JSON format strings for description of the recording device. (optional for recorder)
+const char *strVersion = "\r\n{\"hardware\":\"Arduino UNO R3\", \"firmware\":\"CyberVoice\", \"version\":\"1.0\"}\r\n";
+const char *strCapability = "\r\n{\"capability\":\"012ABCDaopqrVX\"}\r\n";
+                      
 bool flagRecord = false, flag0 = false, flag1 = false;
 int count = 0;
 char buf[HALF_BUF_SIZE * 2];
+long baud = 0;
 
 void freeRunningModeADC(int micPin)
 {
@@ -52,7 +65,7 @@ void addSample()
   char *b = &buf[count * 3];
   *b++ = p[0];                        // Low byte of the sample.
   *b++ = p[1];                        // High byte of the sample.
-  *b++ = p[0] ^ p[1] ^ 0xFF;          // Checksum.
+  *b++ = p[0] ^ p[1] ^ 0xFF;          // Checksum byte: XOR of high byte, low byte, and 0xFF
   count++;                            // One more sample collected.
   flag0 = (count == HALF_SIZE);       // Set flag when the first buffer is full.
   flag1 = (count == FRAME_SIZE);      // Set flag when the second buffer is full.
@@ -61,7 +74,7 @@ void addSample()
 
 void setup()
 {
-  Serial.begin(BAUD_RATE);
+  Serial.begin(115200);               // Initial baud 115200 to comply with CyberVoice command protocol.
   pinMode(12, OUTPUT);
   digitalWrite(12, LOW);
   pinMode(MIC_PIN, INPUT);
@@ -73,9 +86,12 @@ void loop()
 {
   int i;
 
-  // Return immediately if it is not recording.
-  if (!flagRecord)
-    return;
+  // Change baud rate if any CMD_BAUD* event was received. Remember to flush before changing baud rate.
+  if (baud != 0){
+    Serial.flush();     
+    Serial.begin(baud);
+    baud = 0;
+  }
   
   // Write data in ping-pong buffers to serial port when they are full, and then reset the flags.
   if (flag0) {
@@ -90,45 +106,47 @@ void loop()
 
 void serialEvent()
 {
-  static int nIdxCmd = 0;
-  static char cmdBuf[4];
+  static char cmdBuf[4] = {0, 0, 0, 0};
 
   while(Serial.available()){
-    cmdBuf[nIdxCmd++] = Serial.read();
-    if (nIdxCmd == 4){
-      if (strncmp(cmdBuf, "CYB", 3) != 0){
-        memmove(cmdBuf, cmdBuf + 1, 3); 
-        nIdxCmd = 3;
-      }
-      else{
-        if (!flagRecord && cmdBuf[3] == CMD_START){
-          count = 0;
-          flag0 = flag1 = false;
-          flagRecord = true;
-          digitalWrite(12, HIGH);
-        }
-        else if (flagRecord && cmdBuf[3] == CMD_STOP) {
-          flagRecord = false;
-          digitalWrite(12, LOW);
-        }
-        else if (cmdBuf[3] == CMD_8KHZ){
-          init_timer1_prescale1(TICKS_8KHZ, addSample);
-        }
-        else if (cmdBuf[3] == CMD_11KHZ){
-          init_timer1_prescale1(TICKS_11KHZ, addSample);
-        }
-        else if (cmdBuf[3] == CMD_16KHZ){
-          init_timer1_prescale1(TICKS_16KHZ, addSample);
-        }
-        else if (cmdBuf[3] == CMD_22KHZ){
-          init_timer1_prescale1(TICKS_22KHZ, addSample);
-        }
-        else if (cmdBuf[3] == CMD_32KHZ){
-          init_timer1_prescale1(TICKS_32KHZ, addSample);
-        }
-        nIdxCmd = 0;
+    cmdBuf[3] = Serial.read();
+    if (strncmp(cmdBuf, "CYB", 3) == 0){
+      switch(cmdBuf[3]){
+      case CMD_ACK: Serial.write(0); break;
+      case CMD_VERSION: Serial.write(strVersion, strlen(strVersion)); break;
+      case CMD_CAPABILITY: Serial.write(strCapability, strlen(strCapability)); break;
+      case CMD_START: startRecord(); break;
+      case CMD_STOP:  stopRecord(); break;
+      case CMD_8KHZ:  init_timer1_prescale1(TICKS_8KHZ, addSample);  Serial.write(0); break;
+      case CMD_11KHZ: init_timer1_prescale1(TICKS_11KHZ, addSample); Serial.write(0); break;
+      case CMD_16KHZ: init_timer1_prescale1(TICKS_16KHZ, addSample); Serial.write(0); break;
+      case CMD_22KHZ: init_timer1_prescale1(TICKS_22KHZ, addSample); Serial.write(0); break;
+      case CMD_CH1: Serial.write(0); break;  
+      case CMD_BAUD115200:  baud = 115200;  Serial.write(0); break;
+      case CMD_BAUD460800:  baud = 460800;  Serial.write(0); break;
+      case CMD_BAUD921600:  baud = 921600;  Serial.write(0); break;
+      case CMD_BAUD1000000: baud = 1000000; Serial.write(0); break;
+      default: Serial.write(0xff);  // return 0xff for unsupported commands.
       }
     }
+    memmove(cmdBuf, cmdBuf + 1, 3); 
   }
 }
+
+void startRecord()
+{
+  if (!flagRecord){
+    count = 0;
+    flag0 = flag1 = false;
+    flagRecord = true;
+    digitalWrite(12, HIGH);
+  }
+}
+
+void stopRecord()
+{
+  flagRecord = false; 
+  digitalWrite(12, LOW); 
+}
+
 
