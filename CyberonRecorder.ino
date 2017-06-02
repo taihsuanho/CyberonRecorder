@@ -7,35 +7,15 @@
 #define TICKS_16KHZ       880
 #define TICKS_22KHZ       620
 
-#define CMD_ACK           '0'   // ACK simply return 0x00
 #define CMD_START         '1'   // Start recording
 #define CMD_STOP          '2'   // Stop recording
 
-#define CMD_8KHZ          'A'   // Set 8kHz sampling rate
-#define CMD_11KHZ         'B'   // Set 11kHz  
-#define CMD_16KHZ         'C'   // Set 16kHz  
-#define CMD_22KHZ         'D'   // Set 22kHz
-
-#define CMD_CH1           'a'   // Set mono channel
-
-#define CMD_BAUD115200    'o'   // Set baud 115200
-#define CMD_BAUD460800    'p'   // Set baud 460800
-#define CMD_BAUD921600    'q'   // Set baud 921600
-#define CMD_BAUD1000000   'r'   // Set baud 1M
-
-#define CMD_VERSION       'V'   // Get version (optional for recorder)
-#define CMD_CAPABILITY    'X'   // Get capability (optional for recorder)
-
 #define MIC_PIN           A1
+#define BAUD_RATE         921600
 
-// JSON format strings for description of the recording device. (optional for recorder)
-const char *strVersion = "\r\n{\"hardware\":\"Arduino UNO R3\", \"firmware\":\"CyberVoice\", \"version\":\"1.0\"}\r\n";
-const char *strCapability = "\r\n{\"capability\":\"012ABCDaopqrVX\"}\r\n";
-                      
 bool flagRecord = false, flag0 = false, flag1 = false;
 int count = 0;
 char buf[HALF_BUF_SIZE * 2];
-long baud = 0;
 
 void freeRunningModeADC(int micPin)
 {
@@ -74,7 +54,8 @@ void addSample()
 
 void setup()
 {
-  Serial.begin(115200);               // Initial baud 115200 to comply with CyberVoice command protocol.
+  // Setup for recording 16kHz audio and transmission at baud 921600.
+  Serial.begin(BAUD_RATE);
   pinMode(12, OUTPUT);
   digitalWrite(12, LOW);
   pinMode(MIC_PIN, INPUT);
@@ -84,15 +65,6 @@ void setup()
 
 void loop()
 {
-  int i;
-
-  // Change baud rate if any CMD_BAUD* event was received. Remember to flush before changing baud rate.
-  if (baud != 0){
-    Serial.flush();     
-    Serial.begin(baud);
-    baud = 0;
-  }
-  
   // Write data in ping-pong buffers to serial port when they are full, and then reset the flags.
   if (flag0) {
     flag0 = false;
@@ -106,30 +78,11 @@ void loop()
 
 void serialEvent()
 {
-  static char cmdBuf[4] = {0, 0, 0, 0};
-
   while(Serial.available()){
-    cmdBuf[3] = Serial.read();
-    if (strncmp(cmdBuf, "CYB", 3) == 0){
-      switch(cmdBuf[3]){
-      case CMD_ACK: Serial.write(0); break;
-      case CMD_VERSION: Serial.write(strVersion, strlen(strVersion)); break;
-      case CMD_CAPABILITY: Serial.write(strCapability, strlen(strCapability)); break;
-      case CMD_START: startRecord(); break;
-      case CMD_STOP:  stopRecord(); break;
-      case CMD_8KHZ:  init_timer1_prescale1(TICKS_8KHZ, addSample);  Serial.write(0); break;
-      case CMD_11KHZ: init_timer1_prescale1(TICKS_11KHZ, addSample); Serial.write(0); break;
-      case CMD_16KHZ: init_timer1_prescale1(TICKS_16KHZ, addSample); Serial.write(0); break;
-      case CMD_22KHZ: init_timer1_prescale1(TICKS_22KHZ, addSample); Serial.write(0); break;
-      case CMD_CH1: Serial.write(0); break;  
-      case CMD_BAUD115200:  baud = 115200;  Serial.write(0); break;
-      case CMD_BAUD460800:  baud = 460800;  Serial.write(0); break;
-      case CMD_BAUD921600:  baud = 921600;  Serial.write(0); break;
-      case CMD_BAUD1000000: baud = 1000000; Serial.write(0); break;
-      default: Serial.write(0xff);  // return 0xff for unsupported commands.
-      }
+    switch(Serial.read()){
+    case CMD_START: startRecord(); break;
+    case CMD_STOP:  stopRecord(); break;
     }
-    memmove(cmdBuf, cmdBuf + 1, 3); 
   }
 }
 
